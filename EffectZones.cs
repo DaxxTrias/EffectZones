@@ -78,6 +78,8 @@ public class EffectZones : BaseSettingsPlugin<EffectZonesSettings>
             GameController?.EntityListWrapper?.ValidEntitiesByType[EntityType.Effect] ?? [],
             GameController?.EntityListWrapper?.ValidEntitiesByType[EntityType.MonsterMods] ?? [],
             GameController?.EntityListWrapper?.ValidEntitiesByType[EntityType.Terrain] ?? [],
+            GameController?.EntityListWrapper?.ValidEntitiesByType[EntityType.None] ?? [],
+            GameController?.EntityListWrapper?.ValidEntitiesByType[EntityType.Monster] ?? [],
         };
 
         var entityList = entityLists.SelectMany(list => list).ToList();
@@ -128,7 +130,7 @@ public class EffectZones : BaseSettingsPlugin<EffectZonesSettings>
                         : entity.TryGetComponent<GroundEffect>(out var effect) && effect.EffectDescription?.BaseSize is { } groundEffectSize
                             ? groundEffectSize
                             : animated.MiscAnimated?.BaseSize;
-                if (baseRadius == null)
+                if (baseRadius == null && !matchingGroup.IgnoreBaseSize)
                 {
                     DebugWindow.LogError($"Unable to grab base radius for entity {entity} {baseEntity}");
                     _rejectedCache.AddOrUpdate(entity, Stopwatch.StartNew());
@@ -136,14 +138,20 @@ public class EffectZones : BaseSettingsPlugin<EffectZonesSettings>
                 }
 
                 var scale = matchingGroup.IgnoreScale ? 1 : entity.GetComponent<Positioned>()?.Scale;
-                if (scale == null)
+                if (scale == null && !matchingGroup.IgnoreBaseSize)
                 {
                     DebugWindow.LogError($"Unable to grab scale for entity {entity}  {baseEntity}");
                     _rejectedCache.AddOrUpdate(entity, Stopwatch.StartNew());
                     continue;
                 }
-
-                var finalRadius = baseRadius.Value * scale.Value * matchingGroup.CustomScale;
+				
+                var finalRadius = 0f;
+				if (matchingGroup.IgnoreBaseSize){
+					finalRadius = matchingGroup.CustomSize;
+				}else{
+					finalRadius = baseRadius.Value * scale.Value * matchingGroup.CustomScale;
+				}
+                
                 if (matchingGroup.CircleColor.Value.A > 0)
                 {
                     Graphics.DrawFilledCircleInWorld(entity.Pos, finalRadius, matchingGroup.CircleColor);
