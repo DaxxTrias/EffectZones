@@ -35,6 +35,8 @@ public class EntityGroup
     public RangeNode<float> BorderThickness { get; set; } = new RangeNode<float>(1, 0, 10);
     public ColorNode BorderColor { get; set; } = new ColorNode(Color.White);
     public RangeNode<float> CustomScale { get; set; } = new RangeNode<float>(1, 0, 10);
+	public ToggleNode IgnoreBaseSize { get; set; } = new ToggleNode(false);
+    public RangeNode<float> CustomSize { get; set; } = new RangeNode<float>(1, 0, 100);
     public RangeNode<int> BaseSizeOverride { get; set; } = new RangeNode<int>(0, 0, 2000);
     public ToggleNode IgnoreScale { get; set; } = new ToggleNode(false);
 }
