@@ -26,6 +26,9 @@ public class EffectZonesSettings : ISettings
 
     [Menu(null, CollapsedByDefault = true)]
     public ContentNode<TextNode> UnknownEffects { get; set; } = new ContentNode<TextNode>() { UseFlatItems = true, };
+
+    [Menu("Disable in Town/Hideout", "Halts processing and rendering while in towns or hideouts")]
+    public ToggleNode DisableInTownOrHideout { get; set; } = new ToggleNode(true);
 }
 
 public class EntityGroup

@@ -45,6 +45,14 @@ public class EffectZones : BaseSettingsPlugin<EffectZonesSettings>
     public override void Tick()
     {
         _ingameUi = GameController.Game.IngameState.IngameUi;
+        if (Settings.DisableInTownOrHideout.Value)
+        {
+            var area = GameController?.Area?.CurrentArea;
+            if (area != null && (area.IsTown || area.IsHideout))
+            {
+                return;
+            }
+        }
     }
 
     private bool IsMatch(string template, string path)
@@ -67,6 +75,13 @@ public class EffectZones : BaseSettingsPlugin<EffectZonesSettings>
 
     public override void Render()
     {
+        if (Settings.DisableInTownOrHideout.Value)
+        {
+            var area = GameController?.Area?.CurrentArea;
+            if (area != null && (area.IsTown || area.IsHideout))
+                return;
+        }
+
         if (!Settings.IgnoreFullscreenPanels &&
             _ingameUi.FullscreenPanels.Any(x => x.IsVisible) ||
             !Settings.IgnoreLargePanels &&
@@ -144,7 +159,7 @@ public class EffectZones : BaseSettingsPlugin<EffectZonesSettings>
                     _rejectedCache.AddOrUpdate(entity, Stopwatch.StartNew());
                     continue;
                 }
-				
+                
                 var finalRadius = 0f;
 				if (matchingGroup.IgnoreBaseSize){
 					finalRadius = matchingGroup.CustomSize;
