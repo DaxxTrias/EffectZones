@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
@@ -15,10 +16,17 @@ namespace EffectZones;
 public class EffectZones : BaseSettingsPlugin<EffectZonesSettings>
 {
     private readonly ConditionalWeakTable<string, Func<string, bool>> _pathMatchers = [];
+    public const int TileToGridConversion = 23;
+    public const int TileToWorldConversion = 250;
+    public const float WorldToGridConversion = TileToGridConversion / (float)TileToWorldConversion;
 
     private IngameUIElements _ingameUi;
 
     private readonly ConditionalWeakTable<Entity, Stopwatch> _rejectedCache = [];
+    private readonly TimeBasedEntityCache entityCache = new(TimeSpan.FromSeconds(2));
+    private readonly ConcurrentBag<uint> soundAlertCache = new();
+    private readonly Stopwatch soundAlertTimer = Stopwatch.StartNew();
+    private readonly TimeSpan soundAlertCooldown = TimeSpan.FromSeconds(5);
 
     public override bool Initialise()
     {
@@ -39,6 +47,11 @@ public class EffectZones : BaseSettingsPlugin<EffectZonesSettings>
                 Settings.UnknownEffects.Content.RemoveAll(x => contentToRemove.Contains(x.Value));
             }
         };
+        Settings.RemoveAllUnknownEffects.OnPressed += () =>
+        {
+            Settings.UnknownEffects.Content.Clear();
+            Settings.LethalUnknownEffects.Content.Clear();
+        };
         return true;
     }
 
@@ -57,7 +70,8 @@ public class EffectZones : BaseSettingsPlugin<EffectZonesSettings>
 
     private bool IsMatch(string template, string path)
     {
-        if (string.IsNullOrWhiteSpace(template))
+        if (string.IsNullOrWhiteSpace(template) || 
+            string.IsNullOrWhiteSpace(path))
         {
             return false;
         }
@@ -114,7 +128,7 @@ public class EffectZones : BaseSettingsPlugin<EffectZonesSettings>
                 }
             }
 
-            if (!entity.TryGetComponent<Animated>(out var animated) || animated.BaseAnimatedObjectEntity is not { } baseEntity)
+            if (!entity.TryGetComponent<Animated>(out var animated) || animated.BaseAnimatedObjectEntity is not { } baseEntity || string.IsNullOrEmpty(baseEntity.Path))
             {
                 _rejectedCache.AddOrUpdate(entity, Stopwatch.StartNew());
                 continue;
@@ -131,23 +145,16 @@ public class EffectZones : BaseSettingsPlugin<EffectZonesSettings>
                 continue;
             }
 
-            if (string.IsNullOrEmpty(baseEntity.Path))
-            {
-                continue;
-            }   
-
             var matchingGroup = Settings.EntityGroups.Content.FirstOrDefault(g => g.PathTemplates.Content.Any(p => IsMatch(p.Value, baseEntity.Path)));
             if (matchingGroup != null)
             {
-                float? baseRadius =
-                    matchingGroup.BaseSizeOverride.Value is > 0 and { } baseOverride
+                float? baseRadius = matchingGroup.BaseSizeOverride.Value is > 0 and { } baseOverride
                         ? baseOverride
                         : entity.TryGetComponent<GroundEffect>(out var effect) && effect.EffectDescription?.BaseSize is { } groundEffectSize
                             ? groundEffectSize
                             : animated.MiscAnimated?.BaseSize;
                 if (baseRadius == null && !matchingGroup.IgnoreBaseSize)
                 {
-                    DebugWindow.LogError($"Unable to grab base radius for entity {entity} {baseEntity}");
                     _rejectedCache.AddOrUpdate(entity, Stopwatch.StartNew());
                     continue;
                 }
@@ -159,16 +166,28 @@ public class EffectZones : BaseSettingsPlugin<EffectZonesSettings>
                     _rejectedCache.AddOrUpdate(entity, Stopwatch.StartNew());
                     continue;
                 }
-                
+
+				if (matchingGroup.PlayAlert && soundAlertTimer.Elapsed > soundAlertCooldown && !soundAlertCache.Contains(entity.Id))
+                {
+                    soundAlertTimer.Restart();
+                    soundAlertCache.Add(entity.Id);
+                    GameController.SoundController.PlaySound("alert.wav");
+                }
+
                 var finalRadius = 0f;
-				if (matchingGroup.IgnoreBaseSize){
+				if (matchingGroup.IgnoreBaseSize)
+                {
 					finalRadius = matchingGroup.CustomSize;
-				}else{
+				}
+                else
+                {
 					finalRadius = baseRadius.Value * scale.Value * matchingGroup.CustomScale;
 				}
                 
                 if (matchingGroup.CircleColor.Value.A > 0)
                 {
+                    if (Settings.EnableDebugging)
+                        Graphics.DrawText(baseEntity.Path.Split('/').Last(), GameController.IngameState.Camera.WorldToScreen(entity.Pos));
                     Graphics.DrawFilledCircleInWorld(entity.Pos, finalRadius, matchingGroup.CircleColor);
                 }
 
@@ -179,8 +198,12 @@ public class EffectZones : BaseSettingsPlugin<EffectZonesSettings>
             }
             else
             {
+                if (Settings.EnableDebugging)
+                    DebugWindow.LogMsg($"EffectZone for Entity Path: {baseEntity.Path}");
+
                 if (Settings.CollectUnknownEffects)
                 {
+                    
                     if (!Settings.UnknownEffects.Content.Any(x => x.Value == baseEntity.Path))
                     {
                         Settings.UnknownEffects.Content.Add(new TextNode(baseEntity.Path));
@@ -188,6 +211,40 @@ public class EffectZones : BaseSettingsPlugin<EffectZonesSettings>
                 }
 
                 _rejectedCache.AddOrUpdate(entity, Stopwatch.StartNew());
+            }
+
+            HandleLethalEntities(entity);
+        }
+    }
+
+    private bool PlayerInEffect(Entity entity)
+    {
+        if (!entity.TryGetComponent<Animated>(out var animated)) return false;
+        float? baseRadius = entity.TryGetComponent<GroundEffect>(out var effect) && effect.EffectDescription?.BaseSize is { } groundEffectSize
+                            ? groundEffectSize
+                            : animated.MiscAnimated?.BaseSize;
+        if (baseRadius == null) return false;
+        return entity.DistancePlayer <= (baseRadius * WorldToGridConversion);
+    }
+
+    private void HandleLethalEntities(Entity entity)
+    {
+        if (GameController.Player.IsAlive)
+        {
+            entityCache.Add(entity);
+        }
+        else
+        {
+            var recentEntities = entityCache.GetAll();
+            foreach (var recentEntity in recentEntities.Where(PlayerInEffect))
+            {
+                var animated = entity.GetComponent<Animated>();
+                var baseEntity = animated.BaseAnimatedObjectEntity;
+                var path = baseEntity.Path;
+                if (!Settings.LethalUnknownEffects.Content.Any(x => x.Value == path))
+                {
+                    Settings.LethalUnknownEffects.Content.Add(new TextNode(path));
+                }
             }
         }
     }
